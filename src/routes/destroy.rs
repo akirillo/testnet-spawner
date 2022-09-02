@@ -5,16 +5,20 @@ use axum::{
 use crate::testnet::pool::TESTNETS;
 
 fn join_testnet_thread(rpc_url: &String) -> Result<String, String> {
-    // Next step: write to channel that causes thread to close.
     let mut testnets_map = TESTNETS.write().unwrap();
     testnets_map.remove(rpc_url)
         // Transform Option<JoinHandle<String>> into Result<JoinHandle<String>, String>
         .ok_or(String::from("No testnet with this RPC URL."))
         // Propagate Err(String) or call func on Ok(JoinHandle<String>) that returns Result<String, String>
         .and_then(
-            |join_handle| join_handle.join()
-            // Transform Result<String, Box<dyn Any + Send + 'static>> into Result<String, String>
-            .map_err(|err| format!("Testnet thread panicked: {:?}", err))
+            |(tx, join_handle)| {
+                tx.lock().unwrap().send(())
+                    // Transform Result<String, SendError<()>> into Result<String, String>
+                    .map_err(|err| format!("Unable to send termination message to testnet: {:?}", err))?;
+                join_handle.join()
+                    // Transform Result<String, Box<dyn Any + Send + 'static>> into Result<String, String>
+                    .map_err(|err| format!("Testnet thread panicked: {:?}", err))
+            }
         )
 }
 

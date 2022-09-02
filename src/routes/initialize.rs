@@ -1,4 +1,11 @@
 use std::thread;
+use std::sync::{
+    Mutex,
+    mpsc::{
+        channel,
+        TryRecvError,
+    }
+};
 use std::fmt;
 use axum::{
     extract::Json,
@@ -32,16 +39,39 @@ async fn get_rpc_url() -> GetRPCResult<String> {
 pub async fn initialize(Json(state_type): Json<InitializeStateType>) -> String {
     match state_type {
         InitializeStateType::Default => {
-            // Spawn a thread, store its handle in a (for now, in-memory) mapping
+            // Spawn a thread, create a channel, store the sender endpoint in a global in-memory hashmap.
+            
+            // Stub, later on this may actually need to be async (i.e. deploy a bunch of nodes, set up load-balancing RPC endpoint, return it)
             let rpc_url = match get_rpc_url().await {
                 Ok(rpc_url) => rpc_url,
                 Err(err) => format!("{}", err),
             };
+
+            // Create channel that will be used to send the thread a termination message.
+            let (tx, rx) = channel();
+            
+            // Should I use tokio::spawn here instead?
+            // I figure that since these are meant to be persistent processes (testnets),
+            // they should be on dedicated (native) threads, and not as async tasks on one thread.
             let testnet_thread = thread::spawn(move || {
-                String::from("testnet!")
+                let mut count = 0;
+                let result;
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) | Err(TryRecvError::Disconnected) => {
+                            result = format!("Terminated at count: {}", count);
+                            break;
+                        }
+                        Err(TryRecvError::Empty) => {}
+                    }
+                    count += 1;
+                }
+                result
             });
+
+            // Store sender endpoint in hashmap
             let mut testnets_map = TESTNETS.write().unwrap();
-            testnets_map.insert(rpc_url.clone(), testnet_thread);
+            testnets_map.insert(rpc_url.clone(), (Mutex::new(tx), testnet_thread));
             rpc_url
         },
         // InitializeStateType::Mainnet => {
