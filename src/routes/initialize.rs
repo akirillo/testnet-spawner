@@ -1,11 +1,4 @@
-use std::thread;
-use std::sync::{
-    Mutex,
-    mpsc::{
-        channel,
-        TryRecvError,
-    }
-};
+use std::process::Command;
 use std::fmt;
 use axum::{
     extract::Json,
@@ -32,47 +25,46 @@ impl fmt::Display for GetRPCError {
 
 type GetRPCResult<T> = Result<T, GetRPCError>;
 
-async fn get_rpc_url() -> GetRPCResult<String> {
-    Ok("rpcurl".into())
+async fn get_rpc_host() -> GetRPCResult<String> {
+    Ok("127.0.0.1".into())
+}
+
+async fn get_rpc_port() -> GetRPCResult<String> {
+    Ok("8545".into())
 }
 
 pub async fn initialize(Json(state_type): Json<InitializeStateType>) -> String {
     match state_type {
-        InitializeStateType::Default => {
-            // Spawn a thread, create a channel, store the sender endpoint in a global in-memory hashmap.
-            
-            // Stub, later on this may actually need to be async (i.e. deploy a bunch of nodes, set up load-balancing RPC endpoint, return it)
-            let rpc_url = match get_rpc_url().await {
-                Ok(rpc_url) => rpc_url,
-                Err(err) => format!("{}", err),
+        InitializeStateType::Default => {            
+            // Stub, later on this may actually need to be async (e.g. fetch host:port from load balancer, host/port pools)
+            let rpc_host = match get_rpc_host().await {
+                Ok(rpc_host) => rpc_host,
+                Err(err) => return format!("Error getting RPC host: {}", err),
             };
+            let rpc_port = match get_rpc_port().await {
+                Ok(rpc_port) => rpc_port,
+                Err(err) => return format!("Error getting RPC port: {}", err),
+            };
+            let rpc_url = format!("{}:{}", rpc_host, rpc_port);
 
-            // Create channel that will be used to send the thread a termination message.
-            let (tx, rx) = channel();
-            
-            // Should I use tokio::spawn here instead?
-            // I figure that since these are meant to be persistent processes (testnets),
-            // they should be on dedicated (native) threads, and not as async tasks on one thread.
-            let testnet_thread = thread::spawn(move || {
-                let mut count = 0;
-                let result;
-                loop {
-                    match rx.try_recv() {
-                        Ok(_) | Err(TryRecvError::Disconnected) => {
-                            result = format!("Terminated at count: {}", count);
-                            break;
-                        }
-                        Err(TryRecvError::Empty) => {}
-                    }
-                    count += 1;
-                }
-                result
-            });
+            // TODO: Handle w/o unwrap
+            // TODO: Handling of stdin/stdout/stderr
+            // TODO: If args are invalid, we should error in the main process, as well
+            // TODO: Include anvil binary in repo instead of assuming it's present?
+            //       ^ TBF, this should prob look like Dockerizing this service and `foundryup`-ing in the Dockerfile
+            let testnet_process = Command::new("anvil")
+                .arg("--host")
+                .arg(rpc_host)
+                .arg("--port")
+                .arg(rpc_port)
+                .spawn()
+                .unwrap();
 
             // Store sender endpoint in hashmap
             let mut testnets_map = TESTNETS.write().unwrap();
-            testnets_map.insert(rpc_url.clone(), (Mutex::new(tx), testnet_thread));
-            rpc_url
+            let testnet_process_id = testnet_process.id();
+            testnets_map.insert(rpc_url.clone(), (testnet_process, testnet_process_id));
+            format!("RPC URL: {}, PID: {}", rpc_url, testnet_process_id)
         },
         // InitializeStateType::Mainnet => {
         //     let mut testnets_map = TESTNETS.lock().unwrap();

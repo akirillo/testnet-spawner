@@ -11,13 +11,18 @@ fn join_testnet_thread(rpc_url: &String) -> Result<String, String> {
         .ok_or(String::from("No testnet with this RPC URL."))
         // Propagate Err(String) or call func on Ok(JoinHandle<String>) that returns Result<String, String>
         .and_then(
-            |(tx, join_handle)| {
-                tx.lock().unwrap().send(())
-                    // Transform Result<String, SendError<()>> into Result<String, String>
-                    .map_err(|err| format!("Unable to send termination message to testnet: {:?}", err))?;
-                join_handle.join()
-                    // Transform Result<String, Box<dyn Any + Send + 'static>> into Result<String, String>
-                    .map_err(|err| format!("Testnet thread panicked: {:?}", err))
+            |(ref mut testnet_process, testnet_process_id)| {
+                testnet_process.kill()
+                    .map_err(
+                        |err| format!("Testnet process {} already exited: {}", testnet_process_id, err),
+                    )?;
+
+                // Even though the process has terminated, wait on it to prevent zombification.
+                testnet_process.wait()
+                    .map_or_else(
+                        |err| Err(format!("Error waiting on testnet process {}: {}", testnet_process_id, err)),
+                        |ok| Ok(format!("Testnet process {} at RPC URL {} exited with status {}", testnet_process_id, rpc_url, ok))
+                    )
             }
         )
 }
