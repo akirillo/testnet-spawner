@@ -1,29 +1,40 @@
-use std::process::{
-    Command,
-    Stdio,
-    Child,
-    ChildStdout,
+use std::{
+    process::{
+        Command,
+        Stdio,
+        Child,
+        ChildStdout,
+    },
+    io::{
+        BufRead,
+        BufReader,
+    },
+    sync::Arc,
+    env,
+    fmt,
 };
-use std::io::{
-    BufRead,
-    BufReader,
-};
-use std::env;
-use std::fmt;
 use axum::{
     extract,
-    response
+    response,
+    Extension,
 };
 use serde::{
     Deserialize,
     Serialize
 };
-use serde_json::{Value, json};
+use serde_json::{
+    Value,
+    json,
+};
 
-use crate::testnet::pool::TESTNETS;
+use crate::ServerState;
+// use crate::testnet::pool::{
+//     TESTNETS,
+//     PORT,
+// };
 
 #[derive(Deserialize)]
-pub enum InitializeStateType {
+pub enum TestnetStateType {
     Default,
     Mainnet,
     // Snapshot, (TODO)
@@ -40,9 +51,11 @@ impl fmt::Display for GetRPCError {
 
 type GetRPCResult<T> = Result<T, GetRPCError>;
 
-async fn get_rpc_endpoint() -> GetRPCResult<(String, String, String)> {
+async fn get_rpc_endpoint(server_state: &Arc<ServerState>) -> GetRPCResult<(String, String, String)> {
     let rpc_host = String::from("127.0.0.1");
-    let rpc_port = String::from("8545");
+    let mut port = server_state.port.lock().unwrap();
+    let rpc_port = port.to_string();
+    *port += 1;
     let rpc_url = format!("{}:{}", rpc_host, rpc_port);
     Ok((
         rpc_host,
@@ -90,15 +103,19 @@ fn parse_dev_accounts(stdout: &mut ChildStdout, num_accounts: usize) -> Vec<DevA
     dev_accounts
 }
 
-async fn store_testnet_process(testnet_process: Child, rpc_url: String) {
-    let mut testnets_map = TESTNETS.write().unwrap();
+async fn store_testnet_process(server_state: &Arc<ServerState>, testnet_process: Child, rpc_url: String) {
+    let mut testnets_map = server_state.testnets.write().unwrap();
     let testnet_process_id = testnet_process.id();
     testnets_map.insert(rpc_url.clone(), (testnet_process, testnet_process_id));
 }
 
-pub async fn initialize(extract::Json(state_type): extract::Json<InitializeStateType>) -> response::Json<Value> {
+// TODO: More graceful error handling
+pub async fn initialize(
+    Extension(server_state): Extension<Arc<ServerState>>,
+    extract::Json(testnet_state_type): extract::Json<TestnetStateType>
+) -> response::Json<Value> {
     // STUB: May be async later on (e.g. provision infra, then get host/port)
-    let (rpc_host, rpc_port, rpc_url) = get_rpc_endpoint().await.expect("Error getting RPC endpoint");
+    let (rpc_host, rpc_port, rpc_url) = get_rpc_endpoint(&server_state).await.expect("Error getting RPC endpoint");
     let mut args: Vec<String> = vec![
         String::from("--host"),
         rpc_host,
@@ -108,9 +125,9 @@ pub async fn initialize(extract::Json(state_type): extract::Json<InitializeState
         String::from("12"),
     ];
 
-    match state_type {
-        InitializeStateType::Default => {},
-        InitializeStateType::Mainnet => {
+    match testnet_state_type {
+        TestnetStateType::Default => {},
+        TestnetStateType::Mainnet => {
             args.append(&mut vec![
                 String::from("--fork-url"),
                 env::var("MAINNET_RPC_URL").expect("MAINNET_RPC_URL env var not set")
@@ -130,7 +147,7 @@ pub async fn initialize(extract::Json(state_type): extract::Json<InitializeState
     let dev_accounts = parse_dev_accounts(&mut stdout, 10);
 
     // STUB: May be async later on (e.g. store metadata in a DB)
-    store_testnet_process(testnet_process, rpc_url.clone()).await;
+    store_testnet_process(&server_state, testnet_process, rpc_url.clone()).await;
 
     response::Json(json!({
         "rpc_url": rpc_url,
