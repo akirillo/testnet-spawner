@@ -1,12 +1,14 @@
 use std::process::{
     Command,
     Stdio,
-    ChildStdout
+    Child,
+    ChildStdout,
 };
 use std::io::{
     BufRead,
     BufReader,
 };
+use std::env;
 use std::fmt;
 use axum::{
     extract,
@@ -23,7 +25,7 @@ use crate::testnet::pool::TESTNETS;
 #[derive(Deserialize)]
 pub enum InitializeStateType {
     Default,
-    // Mainnet,
+    Mainnet,
     // Snapshot, (TODO)
 }
 
@@ -38,12 +40,15 @@ impl fmt::Display for GetRPCError {
 
 type GetRPCResult<T> = Result<T, GetRPCError>;
 
-async fn get_rpc_host() -> GetRPCResult<String> {
-    Ok("127.0.0.1".into())
-}
-
-async fn get_rpc_port() -> GetRPCResult<String> {
-    Ok("8545".into())
+async fn get_rpc_endpoint() -> GetRPCResult<(String, String, String)> {
+    let rpc_host = String::from("127.0.0.1");
+    let rpc_port = String::from("8545");
+    let rpc_url = format!("{}:{}", rpc_host, rpc_port);
+    Ok((
+        rpc_host,
+        rpc_port,
+        rpc_url
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -85,48 +90,50 @@ fn parse_dev_accounts(stdout: &mut ChildStdout, num_accounts: usize) -> Vec<DevA
     dev_accounts
 }
 
+async fn store_testnet_process(testnet_process: Child, rpc_url: String) {
+    let mut testnets_map = TESTNETS.write().unwrap();
+    let testnet_process_id = testnet_process.id();
+    testnets_map.insert(rpc_url.clone(), (testnet_process, testnet_process_id));
+}
+
 pub async fn initialize(extract::Json(state_type): extract::Json<InitializeStateType>) -> response::Json<Value> {
+    // STUB: May be async later on (e.g. provision infra, then get host/port)
+    let (rpc_host, rpc_port, rpc_url) = get_rpc_endpoint().await.expect("Error getting RPC endpoint");
+    let mut args: Vec<String> = vec![
+        String::from("--host"),
+        rpc_host,
+        String::from("--port"),
+        rpc_port,
+        String::from("--block-time"),
+        String::from("12"),
+    ];
+
     match state_type {
-        InitializeStateType::Default => {            
-            // Stub, later on this may actually need to be async (e.g. fetch host:port from load balancer, host/port pools)
-            let rpc_host = get_rpc_host().await.expect("Error getting RPC host");
-            let rpc_port = get_rpc_port().await.expect("Error getting RPC port");
-            let rpc_url = format!("{}:{}", rpc_host, rpc_port);
-
-            // TODO: Handling of stdin/stdout/stderr
-            // TODO: Parse dev accounts from stdout
-            let mut testnet_process = Command::new("anvil")
-                .stdin(Stdio::null())
-                // TODO: If args are invalid, we should error in the main process, as well
-                // TODO: Include anvil binary in repo instead of assuming it's present?
-                //       ^ TBF, this should prob look like Dockerizing this service and `foundryup`-ing in the Dockerfile
-                .stderr(Stdio::null())
-                .stdout(Stdio::piped())
-                .arg("--host")
-                .arg(rpc_host)
-                .arg("--port")
-                .arg(rpc_port)
-                .spawn()
-                .expect("Error forking testnet process");
-            
-            let mut stdout = testnet_process.stdout.take().expect("Error piping stdout");
-            let dev_accounts = parse_dev_accounts(&mut stdout, 10);
-
-            let mut testnets_map = TESTNETS.write().unwrap();
-            let testnet_process_id = testnet_process.id();
-            testnets_map.insert(rpc_url.clone(), (testnet_process, testnet_process_id));
-
-            response::Json(json!({
-                "rpc_url": rpc_url,
-                "PID": testnet_process_id,
-                "dev_accounts": dev_accounts
-            }))
+        InitializeStateType::Default => {},
+        InitializeStateType::Mainnet => {
+            args.append(&mut vec![
+                String::from("--fork-url"),
+                env::var("MAINNET_RPC_URL").expect("MAINNET_RPC_URL env var not set")
+            ]);
         },
-        // InitializeStateType::Mainnet => {
-        //     let mut testnets_map = TESTNETS.lock().unwrap();
-        //     testnets_map.insert(0, "rpcurl".into());
-        //     let url_clone = testnets_map.get(&0).clone();
-        //     url_clone.map(|&s| s)
-        // },
-    }
+    };
+
+    let mut testnet_process = Command::new("anvil")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .args(args)
+        .spawn()
+        .expect("Error forking testnet process");
+
+    let mut stdout = testnet_process.stdout.take().expect("Error piping stdout");
+    let dev_accounts = parse_dev_accounts(&mut stdout, 10);
+
+    // STUB: May be async later on (e.g. store metadata in a DB)
+    store_testnet_process(testnet_process, rpc_url.clone()).await;
+
+    response::Json(json!({
+        "rpc_url": rpc_url,
+        "dev_accounts": dev_accounts
+    }))
 }
