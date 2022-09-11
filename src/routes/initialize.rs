@@ -26,12 +26,12 @@ use serde_json::{
     Value,
     json,
 };
+use jsonrpsee::{
+    http_client::HttpClientBuilder,
+    core::client::ClientT,
+};
 
 use crate::ServerState;
-// use crate::testnet::pool::{
-//     TESTNETS,
-//     PORT,
-// };
 
 #[derive(Deserialize)]
 pub enum TestnetStateType {
@@ -103,10 +103,9 @@ fn parse_dev_accounts(stdout: &mut ChildStdout, num_accounts: usize) -> Vec<DevA
     dev_accounts
 }
 
-async fn store_testnet_process(server_state: &Arc<ServerState>, testnet_process: Child, rpc_url: String) {
+async fn store_testnet_process(server_state: &Arc<ServerState>, rpc_url: String, testnet_process: Child, snapshot_id: String) {
     let mut testnets_map = server_state.testnets.write().unwrap();
-    let testnet_process_id = testnet_process.id();
-    testnets_map.insert(rpc_url.clone(), (testnet_process, testnet_process_id));
+    testnets_map.insert(rpc_url.clone(), (testnet_process, snapshot_id));
 }
 
 // TODO: More graceful error handling
@@ -146,11 +145,17 @@ pub async fn initialize(
     let mut stdout = testnet_process.stdout.take().expect("Error piping stdout");
     let dev_accounts = parse_dev_accounts(&mut stdout, 10);
 
+    let snapshot_id: String = {
+        let http_rpc_client= HttpClientBuilder::default().build(format!("http://{}", rpc_url)).expect("Error building RPC client");
+        http_rpc_client.request("evm_snapshot", None).await.unwrap()
+    };
+
     // STUB: May be async later on (e.g. store metadata in a DB)
-    store_testnet_process(&server_state, testnet_process, rpc_url.clone()).await;
+    store_testnet_process(&server_state, rpc_url.clone(), testnet_process, snapshot_id.clone()).await;
 
     response::Json(json!({
         "rpc_url": rpc_url,
-        "dev_accounts": dev_accounts
+        "dev_accounts": dev_accounts,
+        "snapshot_id": snapshot_id,
     }))
 }

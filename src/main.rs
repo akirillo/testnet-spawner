@@ -15,11 +15,13 @@ use axum::{
 use routes::{
     initialize::initialize,
     destroy::destroy,
+    reset::reset,
 };
 
+// TODO: Separate snapshots table & associated functionality
 #[allow(dead_code)]
 pub struct ServerState {
-    testnets: RwLock<HashMap<String, (Child, u32)>>,
+    testnets: RwLock<HashMap<String, (Child, String)>>,
     port: Mutex<u32>,
 }
 
@@ -34,7 +36,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/initialize", post(initialize))
-        // .route("/reset", post())
+        .route("/reset", post(reset))
         .route("/destroy", post(destroy))
         .layer(Extension(state));
 
