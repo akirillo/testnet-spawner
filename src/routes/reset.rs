@@ -3,7 +3,6 @@ use axum::{
     extract,
     Extension
 };
-use axum_macros::debug_handler;
 use jsonrpsee::{    
     http_client::{HttpClientBuilder, HttpClient},
     core::client::ClientT,
@@ -39,7 +38,6 @@ async fn reset_testnet_state(server_state: &Arc<ServerState>, rpc_url: &String) 
         .map_err(|err| format!("Error sending `evm_revert` RPC request: {}", err))
 }
 
-#[debug_handler]
 pub async fn reset(
     Extension(server_state): Extension<Arc<ServerState>>,
     extract::Json(rpc_url): extract::Json<String>,

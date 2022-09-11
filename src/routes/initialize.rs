@@ -37,7 +37,6 @@ use crate::ServerState;
 pub enum TestnetStateType {
     Default,
     Mainnet,
-    // Snapshot, (TODO)
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +44,7 @@ struct GetRPCError;
 
 impl fmt::Display for GetRPCError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to get and RPC URL.")
+        write!(f, "Failed to get an RPC URL.")
     }
 }
 
@@ -108,7 +107,6 @@ async fn store_testnet_process(server_state: &Arc<ServerState>, rpc_url: String,
     testnets_map.insert(rpc_url.clone(), (testnet_process, snapshot_id));
 }
 
-// TODO: More graceful error handling
 pub async fn initialize(
     Extension(server_state): Extension<Arc<ServerState>>,
     extract::Json(testnet_state_type): extract::Json<TestnetStateType>
